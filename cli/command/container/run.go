@@ -2,8 +2,11 @@ package container
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"strings"
 	"syscall"
@@ -11,6 +14,7 @@ import (
 	"github.com/docker/cli/cli"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/command/completion"
+	"github.com/docker/cli/cli/command/image"
 	"github.com/docker/cli/opts"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -37,8 +41,24 @@ func NewRunCommand(dockerCli command.Cli) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [OPTIONS] IMAGE [COMMAND] [ARG...]",
 		Short: "Create and run a new container from an image",
-		Args:  cli.RequiresMinArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				currDir, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				key := fmt.Sprintf("%s-%d", currDir, rand.Int63())
+				hash := hex.EncodeToString(sha256.New().Sum([]byte(key)))[:16]
+				fmt.Println("key:", key, hash)
+				defer image.NewRemoveCommand(dockerCli).RunE(cmd, []string{hash})
+
+				buildCmd := image.NewBuildCommand(dockerCli)
+				buildCmd.Flags().Set("tag", hash)
+				if err := buildCmd.RunE(cmd, []string{"."}); err != nil {
+					return err
+				}
+				args = append([]string{hash}, args...)
+			}
 			copts.Image = args[0]
 			if len(args) > 1 {
 				copts.Args = args[1:]
